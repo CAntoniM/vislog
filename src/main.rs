@@ -187,14 +187,105 @@ impl Log {
     }
 }
 
+fn tid_validator (log: &Log, args: &CLI) -> bool {
+    log.tid == args.tid.unwrap()
+}
+
+fn logger_validator (log: &Log, args: &CLI) -> bool {
+    log.logger == args.logger.clone().unwrap()
+}
+
+fn component_validator(log: &Log, args: &CLI) -> bool {
+    log.component == args.component.clone().unwrap()
+}
+
+fn level_validator (log: &Log, args: &CLI) -> bool {
+    log.level == LogLevel::from(args.level.clone().unwrap()).expect("Unable to parse log level")
+}
+
+fn message_validator (log: &Log, args: &CLI) -> bool {
+    let re = Regex::new(&args.message.clone().unwrap()).unwrap();
+    re.is_match(&log.message)
+}
+
+fn before_validator (log: &Log, args: &CLI) -> bool {
+    let date = NaiveDateTime::parse_from_str(args.before.clone().unwrap().as_str(), &args.date_fmt).unwrap();
+    log.time.and_utc().timestamp() <= date.and_utc().timestamp()
+}
+
+fn after_validator (log: &Log, args: &CLI) -> bool {
+    let date = NaiveDateTime::parse_from_str(args.after.clone().unwrap().as_str(), &args.date_fmt).unwrap();
+    log.time.and_utc().timestamp() >= date.and_utc().timestamp()
+}
+
+fn file_validator (log: &Log, args: &CLI) -> bool {
+    log.file == args.source.clone().unwrap()
+}
+
+fn print_log(log: Log, format:& String) {
+    let mut vars = HashMap::new();
+    vars.insert("pid".to_string(), log.pid.to_string());
+    vars.insert("time".to_string(), log.time.to_string());
+    vars.insert("tid".to_string(), log.tid.to_string());
+    vars.insert("logger".to_string(), log.logger.to_string());
+    vars.insert("component".to_string(), log.component);
+    vars.insert("file".to_string(), log.file);
+    vars.insert("line".to_string(), log.line.to_string());
+    vars.insert("level".to_string(), log.level.to_string());
+    vars.insert("message".to_string(), log.message);
+
+    println!(
+        "{}",
+        strfmt::strfmt(format.as_str(), &vars).expect("Failed to format output")
+    )
+
+}
+
 fn main() {
     let args = CLI::parse();
 
-    let mut logs = Vec::new();
-    
-    for file in args.files {
+    let mut filters: Vec< &dyn Fn(& Log, & CLI) -> bool> = Vec::new();
+
+    if let Some(_) = args.tid {
+        filters.push(&tid_validator);
+    }
+
+    if let Some(_) = args.logger.clone() {
+        filters.push(&logger_validator);
+    }
+
+    if let Some(_) = args.component.clone() {
+        filters.push(&component_validator);
+    }
+
+    if let Some(_) = args.level.clone() {
+        filters.push(&level_validator);
+    }
+
+    if let Some(_) = args.message.clone() {
+        filters.push(&message_validator);
+    }
+
+    if let Some(_) = args.before.clone() {
+        filters.push(&before_validator);
+    }
+
+    if let Some(after) = args.after.clone() {
+        filters.push(&after_validator);
+    }
+
+    if let Some(_) = args.source.clone() {
+        filters.push(&file_validator);
+    }
+
+    let files = args.files.clone();
+
+    for file in files {
+
         let contents: String = fs::read_to_string(file).expect("No such file or Directory");
         let pids: Vec<_> = contents.match_indices("Pid#").collect();
+
+
         for index in 0..pids.len() - 1 {
             let (starting_pos, _) = pids[index];
             let (ending_pos, _) = pids[index + 1];
@@ -203,80 +294,45 @@ fn main() {
                 .skip(starting_pos)
                 .take(ending_pos - starting_pos)
                 .collect();
-            logs.push(Log::from(log_str))
+
+            let log = Log::from(log_str);
+
+            let mut filterd = false;
+
+            for filter_index in 0..filters.len() {
+                if ! (filters[filter_index])(&log,&args) {
+                    filterd = true;
+                    break;
+                }
+            }
+
+            if !filterd {
+                print_log(log, &args.fmt);
+            }
+        }
+        let (starting_pos, _) = pids[pids.len()-1];
+        let ending_pos = contents.len() ;
+        let log_str: String = contents
+            .chars()
+            .skip(starting_pos)
+            .take(ending_pos - starting_pos)
+            .collect();
+
+        let log = Log::from(log_str);
+
+        let mut filterd = false;
+
+        for filter_index in 0..filters.len() {
+            if ! (filters[filter_index])(&log,&args) {
+                filterd = true;
+                break;
+            }
+        }
+
+        if !filterd {
+            print_log(log, &args.fmt);
         }
     }
 
-    if let Some(pid) = args.pid {
-        logs = logs.into_iter().filter(|log| log.pid == pid).collect();
-    }
 
-    if let Some(tid) = args.tid {
-        logs = logs.into_iter().filter(|log| log.tid == tid).collect();
-    }
-
-    if let Some(logger) = args.logger.clone() {
-        logs = logs
-            .into_iter()
-            .filter(|log| log.logger == logger)
-            .collect();
-    }
-
-    if let Some(component) = args.component.clone() {
-        logs = logs
-            .into_iter()
-            .filter(|log| log.component == component)
-            .collect();
-    }
-
-    if let Some(txt) = args.level.clone() {
-        let level = LogLevel::from(txt).expect("Failed to parse level");
-        logs = logs.into_iter().filter(|log| log.level == level).collect();
-    }
-
-    if let Some(message) = args.message.clone() {
-        let re = Regex::new(&message).unwrap();
-        logs = logs
-            .into_iter()
-            .filter(|log| re.is_match(&log.message))
-            .collect()
-    }
-
-    if let Some(before) = args.before.clone() {
-        let date = NaiveDateTime::parse_from_str(&before, &args.date_fmt).unwrap();
-        logs = logs
-            .into_iter()
-            .filter(|log| log.time.and_utc().timestamp() <= date.and_utc().timestamp())
-            .collect();
-    }
-
-    if let Some(after) = args.after.clone() {
-        let date = NaiveDateTime::parse_from_str(&after, &args.date_fmt).unwrap();
-        logs = logs
-            .into_iter()
-            .filter(|log| log.time.and_utc().timestamp() >= date.and_utc().timestamp())
-            .collect();
-    }
-
-    if let Some(source) = args.source.clone() {
-        logs = logs.into_iter().filter(|log| log.file == source).collect()
-    }
-
-    for log in logs {
-        let mut vars = HashMap::new();
-        vars.insert("pid".to_string(), log.pid.to_string());
-        vars.insert("time".to_string(), log.time.to_string());
-        vars.insert("tid".to_string(), log.tid.to_string());
-        vars.insert("logger".to_string(), log.logger.to_string());
-        vars.insert("component".to_string(), log.component);
-        vars.insert("file".to_string(), log.file);
-        vars.insert("line".to_string(), log.line.to_string());
-        vars.insert("level".to_string(), log.level.to_string());
-        vars.insert("message".to_string(), log.message);
-
-        println!(
-            "{}",
-            strfmt::strfmt(args.fmt.as_str(), &vars).expect("Failed to format output")
-        )
-    }
 }
