@@ -98,6 +98,8 @@ struct Log {
 
 impl Log {
     pub fn from(text: String) -> Log {
+        let marker_size = 4;
+
         let tid_start = text.find("Tid#").expect(
             format!(
                 "Bad formatted Visibroker Log message missing Thread ID {}",
@@ -127,46 +129,50 @@ impl Log {
             .find("Msg#")
             .expect("Badly formatted Visibroker Log message missing message");
 
-        let pid_str: String = text.chars().skip(4).take(time_start - 4).collect();
+        let pid_str: String = text
+            .chars()
+            .skip(marker_size)
+            .take(time_start - marker_size)
+            .collect();
         let time_str: String = text
             .chars()
-            .skip(time_start + 4)
-            .take(tid_start - (time_start + 4))
+            .skip(time_start + marker_size)
+            .take(tid_start - (time_start + marker_size))
             .collect();
         let tid_str: String = text
             .chars()
-            .skip(tid_start + 4)
-            .take(logger_start - (tid_start + 4))
+            .skip(tid_start + marker_size)
+            .take(logger_start - (tid_start + marker_size))
             .collect();
         let logger_str: String = text
             .chars()
-            .skip(logger_start + 4)
-            .take(component_start - (logger_start + 4))
+            .skip(logger_start + marker_size)
+            .take(component_start - (logger_start + marker_size))
             .collect();
         let component_str: String = text
             .chars()
-            .skip(component_start + 4)
-            .take(file_start - (component_start + 4))
+            .skip(component_start + marker_size)
+            .take(file_start - (component_start + marker_size))
             .collect();
         let file_str: String = text
             .chars()
-            .skip(file_start + 4)
-            .take(line_start - (file_start + 4))
+            .skip(file_start + marker_size)
+            .take(line_start - (file_start + marker_size))
             .collect();
         let line_str: String = text
             .chars()
-            .skip(line_start + 4)
-            .take(level_start - (line_start + 4))
+            .skip(line_start + marker_size)
+            .take(level_start - (line_start + marker_size))
             .collect();
         let level_str: String = text
             .chars()
-            .skip(level_start + 4)
-            .take(message_start - (level_start + 4))
+            .skip(level_start + marker_size)
+            .take(message_start - (level_start + marker_size))
             .collect();
         let message_str: String = text
             .chars()
-            .skip(message_start + 4)
-            .take(text.len() - (message_start + 4))
+            .skip(message_start + marker_size)
+            .take(text.len() - (message_start + marker_size))
             .collect();
 
         return Log {
@@ -185,13 +191,19 @@ impl Log {
             message: message_str.trim().to_string(),
         };
     }
+
+    pub fn from_log(text: &String, start: usize, end: usize) -> Log {
+        let log_str: String = text.chars().skip(start).take(end - start).collect();
+
+        Log::from(log_str)
+    }
 }
 
-fn tid_validator (log: &Log, args: &CLI) -> bool {
+fn tid_validator(log: &Log, args: &CLI) -> bool {
     log.tid == args.tid.unwrap()
 }
 
-fn logger_validator (log: &Log, args: &CLI) -> bool {
+fn logger_validator(log: &Log, args: &CLI) -> bool {
     log.logger == args.logger.clone().unwrap()
 }
 
@@ -199,30 +211,32 @@ fn component_validator(log: &Log, args: &CLI) -> bool {
     log.component == args.component.clone().unwrap()
 }
 
-fn level_validator (log: &Log, args: &CLI) -> bool {
+fn level_validator(log: &Log, args: &CLI) -> bool {
     log.level == LogLevel::from(args.level.clone().unwrap()).expect("Unable to parse log level")
 }
 
-fn message_validator (log: &Log, args: &CLI) -> bool {
+fn message_validator(log: &Log, args: &CLI) -> bool {
     let re = Regex::new(&args.message.clone().unwrap()).unwrap();
     re.is_match(&log.message)
 }
 
-fn before_validator (log: &Log, args: &CLI) -> bool {
-    let date = NaiveDateTime::parse_from_str(args.before.clone().unwrap().as_str(), &args.date_fmt).unwrap();
+fn before_validator(log: &Log, args: &CLI) -> bool {
+    let date = NaiveDateTime::parse_from_str(args.before.clone().unwrap().as_str(), &args.date_fmt)
+        .unwrap();
     log.time.and_utc().timestamp() <= date.and_utc().timestamp()
 }
 
-fn after_validator (log: &Log, args: &CLI) -> bool {
-    let date = NaiveDateTime::parse_from_str(args.after.clone().unwrap().as_str(), &args.date_fmt).unwrap();
+fn after_validator(log: &Log, args: &CLI) -> bool {
+    let date = NaiveDateTime::parse_from_str(args.after.clone().unwrap().as_str(), &args.date_fmt)
+        .unwrap();
     log.time.and_utc().timestamp() >= date.and_utc().timestamp()
 }
 
-fn file_validator (log: &Log, args: &CLI) -> bool {
+fn file_validator(log: &Log, args: &CLI) -> bool {
     log.file == args.source.clone().unwrap()
 }
 
-fn print_log(log: Log, format:& String) {
+fn print_log(log: Log, format: &String) {
     let mut vars = HashMap::new();
     vars.insert("pid".to_string(), log.pid.to_string());
     vars.insert("time".to_string(), log.time.to_string());
@@ -238,13 +252,27 @@ fn print_log(log: Log, format:& String) {
         "{}",
         strfmt::strfmt(format.as_str(), &vars).expect("Failed to format output")
     )
+}
 
+fn filtered_print(log: Log, args: &CLI, filters: &Vec<&dyn Fn(&Log, &CLI) -> bool>) {
+    let mut filterd = false;
+
+    for filter_index in 0..filters.len() {
+        if !(filters[filter_index])(&log, &args) {
+            filterd = true;
+            break;
+        }
+    }
+
+    if !filterd {
+        print_log(log, &args.fmt);
+    }
 }
 
 fn main() {
     let args = CLI::parse();
 
-    let mut filters: Vec< &dyn Fn(& Log, & CLI) -> bool> = Vec::new();
+    let mut filters: Vec<&dyn Fn(&Log, &CLI) -> bool> = Vec::new();
 
     if let Some(_) = args.tid {
         filters.push(&tid_validator);
@@ -270,7 +298,7 @@ fn main() {
         filters.push(&before_validator);
     }
 
-    if let Some(after) = args.after.clone() {
+    if let Some(_) = args.after.clone() {
         filters.push(&after_validator);
     }
 
@@ -281,58 +309,16 @@ fn main() {
     let files = args.files.clone();
 
     for file in files {
-
         let contents: String = fs::read_to_string(file).expect("No such file or Directory");
         let pids: Vec<_> = contents.match_indices("Pid#").collect();
 
-
         for index in 0..pids.len() - 1 {
-            let (starting_pos, _) = pids[index];
-            let (ending_pos, _) = pids[index + 1];
-            let log_str: String = contents
-                .chars()
-                .skip(starting_pos)
-                .take(ending_pos - starting_pos)
-                .collect();
-
-            let log = Log::from(log_str);
-
-            let mut filterd = false;
-
-            for filter_index in 0..filters.len() {
-                if ! (filters[filter_index])(&log,&args) {
-                    filterd = true;
-                    break;
-                }
-            }
-
-            if !filterd {
-                print_log(log, &args.fmt);
-            }
-        }
-        let (starting_pos, _) = pids[pids.len()-1];
-        let ending_pos = contents.len() ;
-        let log_str: String = contents
-            .chars()
-            .skip(starting_pos)
-            .take(ending_pos - starting_pos)
-            .collect();
-
-        let log = Log::from(log_str);
-
-        let mut filterd = false;
-
-        for filter_index in 0..filters.len() {
-            if ! (filters[filter_index])(&log,&args) {
-                filterd = true;
-                break;
-            }
+            let log = Log::from_log(&contents, pids[index].0, pids[index + 1].0);
+            filtered_print(log, &args, &filters);
         }
 
-        if !filterd {
-            print_log(log, &args.fmt);
-        }
+        let log = Log::from_log(&contents, pids[pids.len() - 1].0, contents.len());
+
+        filtered_print(log, &args, &filters);
     }
-
-
 }
