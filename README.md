@@ -23,6 +23,15 @@ will output
 DEBUG: this is an example
 ```
 
+alternativly, you can pipe the log into vislog using stdin, vislog will then 
+stream in the data and print the messages 1 at a time. for example
+
+```bash
+cat example.log | vislog
+```
+
+is equivlent to the first command shown above.
+
 This is done to allow you to de noise the quite busy visibroker logs into a more
 readable format.
 
@@ -171,17 +180,15 @@ cargo install --path .
 
 for future development we need to do the following 
 
-1. Add reading from std::in
-    currently we just read from the files provided on the command line. this is
-    fine however is prevents usage when debugging the applicaiton as we can not
-    filter or reformat the messages as the are created rather than having to
-    only do it after.
-1. Make the handling of errors better
-    currently all error basically just get passed upto a panic state this is not
-    very useful for anyone other than me who wants to use this app
-2. Make the paser more efficent 
+1. Make the paser more efficent 
     currently the parser does a whole bunch of undeed reading and copying to 
     make the development of the app faster. e.g. we create and delete copys of
     strings all over the place to make handling them easier
+
+**Note:**
+
+This is very unlikely to get done as unless it becomes a big perfomance problem
+for me or anyone else e.g. someone is running gigs of data through this the
+perfomance impact will not matter.
 
 

@@ -1,7 +1,7 @@
 use chrono::NaiveDateTime;
 use clap::Parser;
 use regex::{self, Regex};
-use std::{collections::HashMap, fs, process::exit, usize};
+use std::{collections::HashMap,str, fs, io::{stdin, Read}, process::exit, usize};
 
 /// A programe for parsing visibroker default log format
 #[derive(Parser)]
@@ -412,34 +412,87 @@ fn main() {
     }
 
     let files = args.files.clone();
+    if files.len() != 0 {
+        for file in files {
+            let contents: String = fs::read_to_string(file).expect("No such file or Directory");
+            let pids: Vec<_> = contents.match_indices("Pid#").collect();
 
-    for file in files {
-        let contents: String = fs::read_to_string(file).expect("No such file or Directory");
-        let pids: Vec<_> = contents.match_indices("Pid#").collect();
+            for index in 0..pids.len() - 1 {
+                let log;
+                match Log::from_log(&contents, pids[index].0, pids[index + 1].0) {
+                    Ok(data) => log = data,
+                    Err(err) => {
+                        eprintln!("ERROR: {}", err.cause);
+                        exit(1);
+                    }
+                }
+                filtered_print(log, &args, &filters);
+            }
 
-        for index in 0..pids.len() - 1 {
             let log;
-            match Log::from_log(&contents, pids[index].0, pids[index + 1].0) {
+
+            match Log::from_log(&contents, pids[pids.len()].0, contents.len()) {
                 Ok(data) => log = data,
                 Err(err) => {
                     eprintln!("ERROR: {}", err.cause);
                     exit(1);
                 }
             }
+
             filtered_print(log, &args, &filters);
         }
+    } else {
+        const BUFFER_SIZE: usize = 1024;
+        let mut buffer: [u8;BUFFER_SIZE] = [0;BUFFER_SIZE];
+        let mut text: String = String::new();
+        loop {
+            let size;
+            match stdin().read(&mut buffer) {
+                Ok(buf_size) => size = buf_size ,
+                Err(_) => {
+                    eprintln!("ERROR: Failed to read from std::in");
+                    exit(1);
+                },
+            }
 
+            if size == 0 {
+                break;
+            }
+
+            text += match std::str::from_utf8(& buffer) {
+                Ok(txt) => txt,
+                Err(_) => {
+                    eprint!("ERROR: data from std::in is not utf-8 formatted");
+                    exit(1)
+                },
+            };
+
+            let pids: Vec<_> = text.match_indices("Pid#").collect();
+
+            for index in 0..pids.len() - 1 {
+                let log;
+                match Log::from_log(&text, pids[index].0, pids[index + 1].0) {
+                    Ok(data) => log = data,
+                    Err(err) => {
+                        eprintln!("ERROR: {}", err.cause);
+                        exit(1);
+                    }
+                }
+                filtered_print(log, &args, &filters);
+            }
+
+            text = text.chars().skip(pids[pids.len()-1 ].0).take(text.len() - pids[pids.len() - 1].0).collect();
+        }
         let log;
-
-        match Log::from_log(&contents, pids[pids.len()].0, contents.len()) {
+        match Log::from_log(&text, 0, text.len()) {
             Ok(data) => log = data,
             Err(err) => {
                 eprintln!("ERROR: {}", err.cause);
                 exit(1);
             }
         }
-
         filtered_print(log, &args, &filters);
+
     }
 }
 
