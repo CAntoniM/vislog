@@ -1,7 +1,7 @@
 use chrono::NaiveDateTime;
 use clap::Parser;
 use regex::{self, Regex};
-use std::{collections::HashMap, fs, usize};
+use std::{collections::HashMap, fs, process::exit, usize};
 
 /// A programe for parsing visibroker default log format
 #[derive(Parser)]
@@ -59,9 +59,9 @@ enum LogLevel {
 impl LogLevel {
     pub fn from(txt: String) -> Option<Self> {
         match txt.to_lowercase().as_str() {
-            "emergency" | "ermg" | "emg" => Some(LogLevel::EMERG),
+            "emergency" | "emerg" | "emg" => Some(LogLevel::EMERG),
             "alert" | "alt" => Some(LogLevel::ALERT),
-            "ciritcal" | "crit" | "crt" => Some(LogLevel::CRIT),
+            "critical" | "crit" | "crt" => Some(LogLevel::CRIT),
             "error" | "err" => Some(LogLevel::ERROR),
             "warning" | "warn" | "wrn" => Some(LogLevel::WARNING),
             "info" | "inf" => Some(LogLevel::INFO),
@@ -83,7 +83,12 @@ impl LogLevel {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
+struct LogError {
+    cause: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 struct Log {
     pid: usize,
     time: NaiveDateTime,
@@ -97,37 +102,76 @@ struct Log {
 }
 
 impl Log {
-    pub fn from(text: String) -> Log {
+    pub fn from(text: String) -> Result<Log, LogError> {
         let marker_size = 4;
 
-        let tid_start = text.find("Tid#").expect(
-            format!(
-                "Bad formatted Visibroker Log message missing Thread ID {}",
-                text
-            )
-            .as_str(),
-        );
-        let time_start = text
-            .find("Tim#")
-            .expect("Badly formatted Visibroker Log message missing Time of log");
-        let logger_start = text
-            .find("Log#")
-            .expect("Bad formatted Visibroker Log message missing logger");
-        let component_start = text
-            .find("Src#")
-            .expect("Badly formatted Visibroker Log message Component missing");
-        let file_start = text
-            .find("Fil#")
-            .expect("Badly formatted Visibroker log message file name is missing");
-        let line_start = text
-            .find("Lin#")
-            .expect("Badly formatted Visibroker log message missing line");
-        let level_start = text
-            .find("Lvl#")
-            .expect("Badly formatted Visibrokr log message missing log level");
-        let message_start = text
-            .find("Msg#")
-            .expect("Badly formatted Visibroker Log message missing message");
+        let tid_start;
+        match text.find("Tid#") {
+            Some(txt) => tid_start = txt,
+            None => {
+                return Err(LogError {
+                    cause: String::from(format!(
+                        "Badly formatted Visibroker Log message missing Thread ID in following log: {}",
+                        text
+                    )),
+                });
+            }
+        }
+
+        let time_start;
+        match text.find("Tim#") {
+                Some(t) => time_start = t,
+                None => return Err(LogError{
+                    cause: String::from(format!("Badly formatted Visibroker Log message missing Time of log in the following log: {}",text))
+                }),
+        }
+
+        let logger_start;
+        match text.find("Log#") {
+            Some(l) => logger_start = l,
+            None => return Err(LogError{
+                cause: String::from(format!("Badly formatted Visibroker Log message missing logger in the following log: {}",text))
+            }),
+        }
+
+        let component_start;
+        match text.find("Src#") {
+            Some(i) => component_start = i,
+            None => return Err(LogError{
+                cause: String::from(format!("Badly formatted Visibroker Log message missing Component in the following log: {}",text))
+            }),
+        }
+
+        let file_start;
+        match text.find("Fil#") {
+            Some(i) => file_start = i,
+            None => return Err(LogError {
+                cause: String::from(format!("Badly formatted Visibroker Log message missing file name in the following log: {}",text)) })
+        }
+
+        let line_start;
+        match text.find("Lin#") {
+            Some(i) => line_start = i,
+            None => return Err(LogError{
+                cause: String::from(format!("Badly formatted Visibroker Log message missing line number in the following log: {}",text))
+            })
+        }
+
+        let level_start;
+        match text.find("Lvl#") {
+            Some(i) => level_start = i,
+            None => return Err(LogError{
+                cause: String::from(format!("Badly formatted Visibroker Log message missing log level in the following log: {}",text))
+            }),
+        }
+
+        let message_start;
+        match text.find("Msg#") {
+            Some(i) => message_start = i,
+            None => return Err(LogError{
+                cause: String::from(format!("Badly formatted Visibroker Log message missing message text in the following log: {}",text))
+            }),
+        }
 
         let pid_str: String = text
             .chars()
@@ -175,24 +219,85 @@ impl Log {
             .take(text.len() - (message_start + marker_size))
             .collect();
 
-        return Log {
-            pid: pid_str.trim().parse().expect("Unable to parse pid"),
-            time: NaiveDateTime::parse_from_str(time_str.trim(), "%a %b %e %H:%M:%S %Y %fus")
-                .expect("Failed to parse date"),
-            tid: tid_str.trim().parse().expect("unable to parse tid"),
+        let pid;
+        match pid_str.trim().parse() {
+            Ok(p) => pid = p,
+            Err(_) => {
+                return Err(LogError {
+                    cause: String::from(format!(
+                        "Unable to parse the following pid: {} in a log message",
+                        pid_str
+                    )),
+                })
+            }
+        }
+
+        let log_time;
+        match NaiveDateTime::parse_from_str(time_str.trim(), "%a %b %e %H:%M:%S %Y %fus") {
+            Ok(t) => log_time = t,
+            Err(_) => {
+                return Err(LogError {
+                    cause: String::from(format!(
+                    "Unable to parse the following time: {} are you sure this is a valid number",
+                    pid_str
+                )),
+                })
+            }
+        }
+
+        let tid: usize;
+        match tid_str.trim().parse() {
+            Ok(t) => tid = t,
+            Err(_) => {
+                return Err(LogError {
+                    cause: String::from(format!(
+                        "Unable to parse the following tid: {} in a log message",
+                        tid_str
+                    )),
+                })
+            }
+        }
+
+        let line_no;
+        match line_str.trim().parse() {
+            Ok(l) => line_no = l,
+            Err(_) => {
+                return Err(LogError {
+                    cause: String::from(format!(
+                        "Unable to parse the following line number: {} in a log message",
+                        line_str
+                    )),
+                })
+            }
+        }
+
+        let log_level;
+        match LogLevel::from(level_str.trim().to_string()) {
+            Some(level) => log_level = level,
+            None => {
+                return Err(LogError {
+                    cause: String::from(format!(
+                        "Unable to parse the following log level: {} in a log message",
+                        level_str
+                    )),
+                })
+            }
+        }
+
+        return Ok(Log {
+            pid: pid,
+            time: log_time,
+            tid: tid,
             logger: logger_str.trim().to_string(),
             component: component_str.trim().to_string(),
             file: file_str.trim().to_string(),
-            line: line_str
-                .trim()
-                .parse()
-                .expect("Unabled to parse line number"),
-            level: LogLevel::from(level_str.trim().to_string()).expect("unable to parse log level"),
+            line: line_no,
+            level: log_level,
             message: message_str.trim().to_string(),
-        };
+        });
     }
 
-    pub fn from_log(text: &String, start: usize, end: usize) -> Log {
+    pub fn from_log(text: &String, start: usize, end: usize) -> Result<Log, LogError> {
         let log_str: String = text.chars().skip(start).take(end - start).collect();
 
         Log::from(log_str)
@@ -313,12 +418,210 @@ fn main() {
         let pids: Vec<_> = contents.match_indices("Pid#").collect();
 
         for index in 0..pids.len() - 1 {
-            let log = Log::from_log(&contents, pids[index].0, pids[index + 1].0);
+            let log;
+            match Log::from_log(&contents, pids[index].0, pids[index + 1].0) {
+                Ok(data) => log = data,
+                Err(err) => {
+                    eprintln!("ERROR: {}", err.cause);
+                    exit(1);
+                }
+            }
             filtered_print(log, &args, &filters);
         }
 
-        let log = Log::from_log(&contents, pids[pids.len() - 1].0, contents.len());
+        let log;
+
+        match Log::from_log(&contents, pids[pids.len()].0, contents.len()) {
+            Ok(data) => log = data,
+            Err(err) => {
+                eprintln!("ERROR: {}", err.cause);
+                exit(1);
+            }
+        }
 
         filtered_print(log, &args, &filters);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn log_level_from() {
+        let cases = vec![
+            (String::from("error"), Some(LogLevel::ERROR)),
+            (String::from("ERROR"), Some(LogLevel::ERROR)),
+            (String::from("err"), Some(LogLevel::ERROR)),
+            (String::from("ERR"), Some(LogLevel::ERROR)),
+            (String::from("ERM"), None),
+            (String::from("EMERGENCY"), Some(LogLevel::EMERG)),
+            (String::from("emergency"), Some(LogLevel::EMERG)),
+            (String::from("EMERG"), Some(LogLevel::EMERG)),
+            (String::from("emerg"), Some(LogLevel::EMERG)),
+            (String::from("emg"), Some(LogLevel::EMERG)),
+            (String::from("EMG"), Some(LogLevel::EMERG)),
+            (String::from("ALERT"), Some(LogLevel::ALERT)),
+            (String::from("alert"), Some(LogLevel::ALERT)),
+            (String::from("ALT"), Some(LogLevel::ALERT)),
+            (String::from("alt"), Some(LogLevel::ALERT)),
+            (String::from("CRITICAL"), Some(LogLevel::CRIT)),
+            (String::from("critical"), Some(LogLevel::CRIT)),
+            (String::from("CRIT"), Some(LogLevel::CRIT)),
+            (String::from("crit"), Some(LogLevel::CRIT)),
+            (String::from("CRT"), Some(LogLevel::CRIT)),
+            (String::from("crt"), Some(LogLevel::CRIT)),
+            (String::from("WARNING"), Some(LogLevel::WARNING)),
+            (String::from("warning"), Some(LogLevel::WARNING)),
+            (String::from("WARN"), Some(LogLevel::WARNING)),
+            (String::from("warn"), Some(LogLevel::WARNING)),
+            (String::from("WRN"), Some(LogLevel::WARNING)),
+            (String::from("wrn"), Some(LogLevel::WARNING)),
+            (String::from("INFO"), Some(LogLevel::INFO)),
+            (String::from("info"), Some(LogLevel::INFO)),
+            (String::from("INF"), Some(LogLevel::INFO)),
+            (String::from("inf"), Some(LogLevel::INFO)),
+            (String::from("DEBUG"), Some(LogLevel::DEBUG)),
+            (String::from("debug"), Some(LogLevel::DEBUG)),
+            (String::from("DBG"), Some(LogLevel::DEBUG)),
+            (String::from("dbg"), Some(LogLevel::DEBUG)),
+            (String::from(""), None),
+        ];
+
+        for (input, output) in cases {
+            assert_eq!(
+                LogLevel::from(input.clone()),
+                output,
+                "Checking {} becomes {:?}",
+                input,
+                output
+            );
+        }
+    }
+
+    #[test]
+    fn log_from() {
+        let cases = vec![
+            (String::from("Pid# 1 Tim# Tue Jul  9 09:09:27 2024 612542us Tid# 1 Log# default Src# server Fil# vorb.C Lin# 1 Lvl# INFO Msg# test"), 
+            Ok(Log{
+                pid: 1,
+                time: NaiveDateTime::parse_from_str("Tue Jul  9 09:09:27 2024 612542us","%a %b %e %H:%M:%S %Y %fus").unwrap(),
+                tid: 1,
+                logger: String::from("default"), 
+                component: String::from("server"),
+                file: String::from("vorb.C"),
+                line: 1,
+                level: LogLevel::INFO,
+                message: String::from("test") })), 
+            (String::from("Pid# 999 Tim# Tue Jul  9 09:09:27 2024 612542us Tid# 1 Log# default Src# server Fil# vorb.C Lin# 1 Lvl# INFO Msg# test"), 
+            Ok(Log{
+                pid: 999,
+                time: NaiveDateTime::parse_from_str("Tue Jul  9 09:09:27 2024 612542us","%a %b %e %H:%M:%S %Y %fus").unwrap(),
+                tid: 1,
+                logger: String::from("default"), 
+                component: String::from("server"),
+                file: String::from("vorb.C"),
+                line: 1,
+                level: LogLevel::INFO,
+                message: String::from("test") })),
+            (String::from("Pid# 1 Tim# Tue Jul  9 09:09:27 2024 000000us Tid# 1 Log# default Src# server Fil# vorb.C Lin# 1 Lvl# INFO Msg# test"), 
+            Ok(Log{
+                pid: 1,
+                time: NaiveDateTime::parse_from_str("Tue Jul  9 09:09:27 2024 000000us","%a %b %e %H:%M:%S %Y %fus").unwrap(),
+                tid: 1,
+                logger: String::from("default"), 
+                component: String::from("server"),
+                file: String::from("vorb.C"),
+                line: 1,
+                level: LogLevel::INFO,
+                message: String::from("test") })), 
+            (String::from("Pid# 1 Tim# Tue Jul  9 09:09:27 2024 612542us Tid# 999 Log# default Src# server Fil# vorb.C Lin# 1 Lvl# INFO Msg# test"), 
+            Ok(Log{
+                pid: 1,
+                time: NaiveDateTime::parse_from_str("Tue Jul  9 09:09:27 2024 612542us","%a %b %e %H:%M:%S %Y %fus").unwrap(),
+                tid: 999,
+                logger: String::from("default"), 
+                component: String::from("server"),
+                file: String::from("vorb.C"),
+                line: 1,
+                level: LogLevel::INFO,
+                message: String::from("test") })),
+            (String::from("Pid# 1 Tim# Tue Jul  9 09:09:27 2024 612542us Tid# 1 Log# user Src# server Fil# vorb.C Lin# 1 Lvl# INFO Msg# test"), 
+            Ok(Log{
+                pid: 1,
+                time: NaiveDateTime::parse_from_str("Tue Jul  9 09:09:27 2024 612542us","%a %b %e %H:%M:%S %Y %fus").unwrap(),
+                tid: 1,
+                logger: String::from("user"), 
+                component: String::from("server"),
+                file: String::from("vorb.C"),
+                line: 1,
+                level: LogLevel::INFO,
+                message: String::from("test") })),
+            (String::from("Pid# 1 Tim# Tue Jul  9 09:09:27 2024 612542us Tid# 1 Log# default Src# csiv2 Fil# vorb.C Lin# 1 Lvl# INFO Msg# test"), 
+            Ok(Log{
+                pid: 1,
+                time: NaiveDateTime::parse_from_str("Tue Jul  9 09:09:27 2024 612542us","%a %b %e %H:%M:%S %Y %fus").unwrap(),
+                tid: 1,
+                logger: String::from("default"), 
+                component: String::from("csiv2"),
+                file: String::from("vorb.C"),
+                line: 1,
+                level: LogLevel::INFO,
+                message: String::from("test") })),
+            (String::from("Pid# 1 Tim# Tue Jul  9 09:09:27 2024 612542us Tid# 1 Log# default Src# server Fil# vdelegate.C Lin# 1 Lvl# INFO Msg# test"), 
+            Ok(Log{
+                pid: 1,
+                time: NaiveDateTime::parse_from_str("Tue Jul  9 09:09:27 2024 612542us","%a %b %e %H:%M:%S %Y %fus").unwrap(),
+                tid: 1,
+                logger: String::from("default"), 
+                component: String::from("server"),
+                file: String::from("vdelegate.C"),
+                line: 1,
+                level: LogLevel::INFO,
+                message: String::from("test") })),
+            (String::from("Pid# 1 Tim# Tue Jul  9 09:09:27 2024 612542us Tid# 1 Log# default Src# server Fil# vorb.C Lin# 999 Lvl# INFO Msg# test"), 
+            Ok(Log{
+                pid: 1,
+                time: NaiveDateTime::parse_from_str("Tue Jul  9 09:09:27 2024 612542us","%a %b %e %H:%M:%S %Y %fus").unwrap(),
+                tid: 1,
+                logger: String::from("default"), 
+                component: String::from("server"),
+                file: String::from("vorb.C"),
+                line: 999,
+                level: LogLevel::INFO,
+                message: String::from("test") })),
+            (String::from("Pid# 1 Tim# Tue Jul  9 09:09:27 2024 612542us Tid# 1 Log# default Src# server Fil# vorb.C Lin# 1 Lvl# ERROR Msg# test"), 
+            Ok(Log{
+                pid: 1,
+                time: NaiveDateTime::parse_from_str("Tue Jul  9 09:09:27 2024 612542us","%a %b %e %H:%M:%S %Y %fus").unwrap(),
+                tid: 1,
+                logger: String::from("default"), 
+                component: String::from("server"),
+                file: String::from("vorb.C"),
+                line: 1,
+                level: LogLevel::ERROR,
+                message: String::from("test") })),
+            (String::from("Pid# 1 Tim# Tue Jul  9 09:09:27 2024 612542us Tid# 1 Log# default Src# server Fil# vorb.C Lin# 1 Lvl# INFO Msg# example"), 
+            Ok(Log{
+                pid: 1,
+                time: NaiveDateTime::parse_from_str("Tue Jul  9 09:09:27 2024 612542us","%a %b %e %H:%M:%S %Y %fus").unwrap(),
+                tid: 1,
+                logger: String::from("default"), 
+                component: String::from("server"),
+                file: String::from("vorb.C"),
+                line: 1,
+                level: LogLevel::INFO,
+                message: String::from("example") })),
+        ];
+
+        for (input, output) in cases {
+            assert_eq!(
+                Log::from(input.clone()),
+                output,
+                "Checking {} becomes {:?}",
+                input,
+                output
+            );
+        }
     }
 }
