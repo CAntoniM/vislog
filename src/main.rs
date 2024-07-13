@@ -341,10 +341,10 @@ fn file_validator(log: &Log, args: &CLI) -> bool {
     log.file == args.source.clone().unwrap()
 }
 
-fn print_log(log: Log, format: &String) {
+fn print_log(log: Log, format: &String, date_fromat: &String) {
     let mut vars = HashMap::new();
     vars.insert("pid".to_string(), log.pid.to_string());
-    vars.insert("time".to_string(), log.time.to_string());
+    vars.insert("time".to_string(), log.time.format(&date_fromat).to_string());
     vars.insert("tid".to_string(), log.tid.to_string());
     vars.insert("logger".to_string(), log.logger.to_string());
     vars.insert("component".to_string(), log.component);
@@ -370,7 +370,7 @@ fn filtered_print(log: Log, args: &CLI, filters: &Vec<&dyn Fn(&Log, &CLI) -> boo
     }
 
     if !filterd {
-        print_log(log, &args.fmt);
+        print_log(log, &args.fmt,&args.date_fmt);
     }
 }
 
