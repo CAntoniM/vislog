@@ -431,7 +431,7 @@ fn main() {
 
             let log;
 
-            match Log::from_log(&contents, pids[pids.len()].0, contents.len()) {
+            match Log::from_log(&contents, pids[pids.len() - 1].0, contents.len()) {
                 Ok(data) => log = data,
                 Err(err) => {
                     eprintln!("ERROR: {}", err.cause);
@@ -459,13 +459,13 @@ fn main() {
                 break;
             }
 
-            text += match std::str::from_utf8(& buffer) {
+            text.push_str( match std::str::from_utf8(& buffer) {
                 Ok(txt) => txt,
                 Err(_) => {
                     eprint!("ERROR: data from std::in is not utf-8 formatted");
                     exit(1)
                 },
-            };
+            });
 
             let pids: Vec<_> = text.match_indices("Pid#").collect();
 
